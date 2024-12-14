@@ -1,0 +1,25 @@
+name: build-and-publish
+on: workflow_dispatch
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: pnpm/action-setup@v2
+      - name: Install Node.js with pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+      - run: pnpm install
+
+      - uses: mymindstorm/setup-emsdk@v11
+        with:
+          version: 2.0.24
+
+      - run: pnpm build
+
+      - uses: JS-DevTools/npm-publish@v1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
