@@ -1,17 +1,13 @@
+import { PromisePool } from "@supercharge/promise-pool";
+import findRoot from "find-root";
 import fs from "fs";
+import { glob } from "glob";
 import os from "os";
 import path from "path";
 import util from "util";
-
-import { PromisePool } from "@supercharge/promise-pool";
-const findRoot = require("find-root");
-
 import packageInfo from "./package.json";
 
-const langArg = process.argv[2];
-
 const exec = util.promisify(require("child_process").exec);
-
 const outDir = path.join(__dirname, "out");
 
 let hasErrors = false;
@@ -22,7 +18,6 @@ async function buildParserWASM(
 ) {
   const label = subPath ? path.join(name, subPath) : name;
   try {
-    console.log(`⏳ Building ${label}`);
     let packagePath;
     try {
       packagePath = findRoot(require.resolve(name));
@@ -30,11 +25,23 @@ async function buildParserWASM(
       packagePath = path.join(__dirname, "node_modules", name);
     }
     const cwd = subPath ? path.join(packagePath, subPath) : packagePath;
-    if (generate) {
-      await exec(`pnpm tree-sitter generate`, { cwd });
+
+    const loadWasms = () => glob("*.wasm", { cwd });
+
+    if ((await loadWasms()).length == 0) {
+      console.log(`⏳ Building ${label}`);
+      if (generate) {
+        await exec(`npx tree-sitter generate`, { cwd });
+      }
+      await exec(`npx tree-sitter build --wasm`, { cwd });
+      console.log(`✅ Finished building ${label}`);
     }
-    await exec(`pnpm tree-sitter build-wasm ${cwd}`);
-    console.log(`✅ Finished building ${label}`);
+
+    if ((await loadWasms()).length == 0) {
+      throw new Error("No WASM files found");
+    }
+    await exec(`mv *.wasm ${outDir}`, { cwd });
+    console.log(`✅ Copied ${label}`);
   } catch (e) {
     console.error(`🔥 Failed to build ${label}:\n`, e);
     hasErrors = true;
@@ -49,11 +56,9 @@ fs.mkdirSync(outDir);
 
 process.chdir(outDir);
 
-const grammars = Object.keys(packageInfo.devDependencies)
-  .filter((n) => n.startsWith("tree-sitter-") && n !== "tree-sitter-cli")
-  .concat('@tree-sitter-grammars/tree-sitter-zig')
-  .concat("@tlaplus/tree-sitter-tlaplus")
-  .filter((s) => !langArg || s.includes(langArg));
+const grammars = Object.keys(packageInfo.devDependencies).filter(
+  (n) => n.includes("tree-sitter-") && n !== "tree-sitter-cli"
+);
 
 PromisePool.withConcurrency(os.cpus().length)
   .for(grammars)
@@ -75,5 +80,5 @@ PromisePool.withConcurrency(os.cpus().length)
     if (hasErrors) {
       process.exit(1);
     }
-    await exec(`mv *.wasm ${outDir}`, { cwd: __dirname });
+    await exec("rm tree-sitter-embedded_template.wasm", { cwd: outDir });
   });
